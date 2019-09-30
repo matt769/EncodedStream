@@ -7,8 +7,10 @@ IF(NOT CMAKE_BUILD_TYPE)
 ENDIF()
 SET(CMAKE_CXX_FLAGS "-Wall -O2")
 
+include_directories(${PROJECT_SOURCE_DIR}/../src)
+
 add_executable(ex1_send_and_receive_reply
 		ex1_send_and_receive_reply.cpp 
-		COBS.cpp	
+		${PROJECT_SOURCE_DIR}/../src/COBS.cpp	
 		)
 

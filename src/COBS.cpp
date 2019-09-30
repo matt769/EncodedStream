@@ -1,3 +1,9 @@
+#ifdef __linux__
+#include <stdint.h> // for fixed size data types
+#else
+#include<Arduino.h>
+#endif
+
 #include "COBS.h"
 
 namespace COBS {

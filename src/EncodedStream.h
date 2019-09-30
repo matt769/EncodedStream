@@ -1,7 +1,18 @@
 #ifndef ENCODED_STREAM_H
 #define ENCODED_STREAM_H
 
+
+#ifdef __linux__
+#include <stdint.h> // for fixed size data types
+#include <cstring> // for memcpy
+#include <unistd.h> // for read/write
+
+#else
 #include<Arduino.h>
+
+#endif
+
+
 #include "COBS.h"
 
 // this class just expects packets to be delimited by 0
@@ -12,15 +23,26 @@ static_assert(sizeof(float) == 4, "float variable not expected size."); // neces
 static_assert(sizeof(char) == 1, "char variable not expected size.");
 
 
+
+
 template<uint8_t BUFFER_SIZE>
 class EncodedStream {
-    //using ParsePackageCallback = bool(*)(char buffer[], uint8_t size);
+#ifdef __linux__
+    using ParsePackageCallback = bool(*)(EncodedStream<BUFFER_SIZE>& encodedStream);
+#else
     using ParsePackageCallback = bool(*)(void);
+#endif
+
 
   public:
     const uint8_t bufferSize;
+#ifdef __linux__
+    EncodedStream(int fileDescriptor, ParsePackageCallback parsePackageCallback);
+#else
     EncodedStream(Stream* stream);
     EncodedStream(Stream* stream, ParsePackageCallback parsePackageCallback);
+#endif
+
     // will return true if a full packet has been received and decoded
     // expected to be called at least as fast as packets are arriving (i.e. every time in (quick) loop())
     bool receive(); // to be called periodically (i.e. every loop())
@@ -33,7 +55,12 @@ class EncodedStream {
     T extractFromBuffer();
 
   private:
+#ifdef __linux__
+    int fileDescriptor;
+#else
     Stream* stream;
+#endif
+
     ParsePackageCallback parsePackageCallback = nullptr;
     char sendBuffer[BUFFER_SIZE + 3]; // This will contain the unencoded data (with 3 bytes space for encoding etc)
     // The encoded data will only be kept temporarily and immediately sent
@@ -60,16 +87,20 @@ class EncodedStream {
  *************************************************************************************
 */
 
-template<uint8_t BUFFER_SIZE>
-EncodedStream<BUFFER_SIZE>::EncodedStream(Stream* stream):
-  bufferSize(BUFFER_SIZE + 3), // 3 bytes overhead
-  stream(stream),
-  parsePackageCallback(nullptr)
-{
-  static_assert(BUFFER_SIZE >= 0 && BUFFER_SIZE <= 252 , "Buffer size must be >=0 and <= 252.");
-  isBigEndian = checkIfBigEndian();
-}
 
+
+#ifdef __linux__
+template<uint8_t BUFFER_SIZE>
+EncodedStream<BUFFER_SIZE>::EncodedStream(int fileDescriptor, ParsePackageCallback parsePackageCallback):
+
+        bufferSize(BUFFER_SIZE + 3), // 3 bytes overhead
+        fileDescriptor(fileDescriptor),
+        parsePackageCallback(parsePackageCallback)
+{
+    static_assert(BUFFER_SIZE >= 0 && BUFFER_SIZE <= 252 , "Buffer size must be >=0 and <= 252.");
+    isBigEndian = checkIfBigEndian();
+}
+#else
 template<uint8_t BUFFER_SIZE>
 EncodedStream<BUFFER_SIZE>::EncodedStream(Stream* stream, ParsePackageCallback parsePackageCallback):
   bufferSize(BUFFER_SIZE + 3), // 3 bytes overhead
@@ -79,6 +110,8 @@ EncodedStream<BUFFER_SIZE>::EncodedStream(Stream* stream, ParsePackageCallback p
   static_assert(BUFFER_SIZE >= 0 && BUFFER_SIZE <= 252 , "Buffer size must be >=0 and <= 252.");
   isBigEndian = checkIfBigEndian();
 }
+#endif
+
 
 // initial state will be receiving because there is no start marker, only an end marker
 // stop receiving when receive a 0
@@ -94,8 +127,13 @@ bool EncodedStream<BUFFER_SIZE>::receive() {
     receiptComplete = false;
   }
 
-  while ((stream->available() > 0) && !receiptComplete) {
+#ifdef __linux__
+    while ((read(fileDescriptor, &c, 1) == 1) && !receiptComplete) {
+#else
+    while ((stream->available() > 0) && !receiptComplete) {
     c = stream->read();
+#endif
+
     receiveBuffer[idx] = c;
     if (c == 0) {
       // end of package
@@ -130,7 +168,13 @@ bool EncodedStream<BUFFER_SIZE>::receive() {
         if (parsePackageCallback != nullptr) {
           receiveBufferSize--; // don't need checksum anymore
           extractPosition = receiveBuffer; // reset back to start of buffer before variable extraction happens in the callback
-          parsePackageCallback();
+
+#ifdef __linux__
+            parsePackageCallback(*this);
+#else
+            parsePackageCallback();
+#endif
+
         }
       }
     }
@@ -151,7 +195,11 @@ void EncodedStream<BUFFER_SIZE>::send() {
   char sendBufferEnc[bufferSize]; // have to create full size even if won't use it
   COBS::encode(sendBuffer, sendBufferSize, sendBufferEnc);
 
-  stream->write(sendBufferEnc, sendBufferSize + 2);
+#ifdef __linux__
+    write(fileDescriptor, sendBufferEnc, sendBufferSize + 2);
+#else
+    stream->write(sendBufferEnc, sendBufferSize + 2);
+#endif
 
   sendBufferSize = 0;
 }
